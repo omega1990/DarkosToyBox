@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>BVH Construction</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@700;800&display=swap');
+
+:root {
+  --bg: #07080b;
+  --surf: #0f1116;
+  --surf2: #13161d;
+  --border: #1a1f2e;
+  --accent: #00e5ff;
+  --gold: #ffd166;
+  --green: #7fff6b;
+  --pink: #ff6b9d;
+  --orange: #ff6b35;
+  --purple: #bf5fff;
+  --text: #ccd6f0;
+  --dim: #3d4a66;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body { height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:'JetBrains Mono',monospace; touch-action:none; }
+
+.app { display:flex; flex-direction:column; height:100%; }
+
+/* HEADER */
+.hdr { display:flex; align-items:center; gap:10px; padding:0 14px; height:46px; background:var(--surf); border-bottom:1px solid var(--border); flex-shrink:0; }
+.hdr h1 { font-family:'Syne',sans-serif; font-size:13px; font-weight:800; color:var(--accent); letter-spacing:.08em; text-transform:uppercase; }
+.hdr .sub { font-size:9px; color:var(--dim); letter-spacing:.06em; }
+.mode-switch { margin-left:auto; display:flex; }
+.msw { padding:5px 10px; font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; border:1px solid var(--border); background:transparent; color:var(--dim); cursor:pointer; transition:all .15s; }
+.msw:first-child { border-right:none; }
+.msw.on { background:rgba(0,229,255,0.1); color:var(--accent); border-color:rgba(0,229,255,0.25); }
+
+/* CANVAS */
+.cvs-wrap { flex:1; position:relative; min-height:0; overflow:hidden; }
+canvas { position:absolute; top:0; left:0; touch-action:none; }
+
+/* STEP CARD */
+.step-card {
+  position:absolute; bottom:10px; left:10px; right:10px;
+  background:rgba(7,8,11,0.92);
+  border:1px solid var(--border);
+  backdrop-filter:blur(8px);
+  padding:12px 14px;
+  pointer-events:none;
+  transform:translateY(0);
+  transition:opacity .2s;
+}
+.step-num { font-size:9px; color:var(--dim); letter-spacing:.1em; text-transform:uppercase; margin-bottom:4px; }
+.step-title { font-family:'Syne',sans-serif; font-size:14px; font-weight:800; margin-bottom:5px; }
+.step-body { font-size:11px; color:var(--text); line-height:1.65; }
+.step-body em { color:var(--gold); font-style:normal; font-weight:600; }
+.step-body b { color:var(--accent); }
+.step-body s { color:var(--green); text-decoration:none; }
+.step-body u { color:var(--pink); text-decoration:none; }
+
+/* CONTROLS */
+.ctrl-bar { display:flex; gap:6px; padding:10px 12px; background:var(--surf); border-top:1px solid var(--border); flex-shrink:0; align-items:center; }
+.ctrl-bar .spacer { flex:1; }
+
+btn, .btn { display:inline-flex; align-items:center; justify-content:center; gap:5px; padding:9px 14px; font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; letter-spacing:.05em; border:1px solid var(--border); background:transparent; color:var(--dim); cursor:pointer; transition:all .15s; user-select:none; }
+.btn:active { transform:scale(.96); }
+.btn.primary { border-color:rgba(0,229,255,.35); color:var(--accent); background:rgba(0,229,255,.07); }
+.btn.primary:active { background:rgba(0,229,255,.15); }
+.btn.secondary { border-color:rgba(255,209,102,.25); color:var(--gold); background:rgba(255,209,102,.05); }
+.btn.go { border-color:rgba(127,255,107,.3); color:var(--green); background:rgba(127,255,107,.06); font-size:13px; padding:9px 18px; }
+.btn.danger { border-color:rgba(255,107,53,.3); color:var(--orange); background:rgba(255,107,53,.05); }
+.btn:disabled { opacity:.3; pointer-events:none; }
+
+.step-progress { display:flex; gap:3px; align-items:center; }
+.sp-dot { width:5px; height:5px; border-radius:50%; background:var(--border); transition:background .2s; }
+.sp-dot.done { background:var(--dim); }
+.sp-dot.active { background:var(--accent); }
+
+/* PLACE MODE bar */
+.place-bar { display:flex; gap:6px; padding:10px 12px; background:var(--surf); border-top:1px solid var(--border); flex-shrink:0; align-items:center; }
+.place-hint { font-size:10px; color:var(--dim); flex:1; }
+
+/* TREE VIEW */
+.tree-wrap { position:absolute; top:0; left:0; right:0; bottom:0; overflow:auto; padding:16px 12px; display:none; }
+.tree-wrap.show { display:block; }
+.tnode { position:relative; margin-bottom:2px; }
+.tnode-row { display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid transparent; cursor:pointer; transition:border-color .15s; }
+.tnode-row:hover { border-color:var(--border); }
+.tnode-row.sel { border-color:var(--accent); background:rgba(0,229,255,.04); }
+.tnode-dot { width:9px; height:9px; border-radius:2px; flex-shrink:0; }
+.tnode-label { font-size:11px; font-weight:600; }
+.tnode-detail { font-size:9px; color:var(--dim); margin-top:1px; }
+.tnode-axis { font-size:9px; padding:1px 5px; border-radius:2px; margin-left:auto; flex-shrink:0; }
+.tnode-children { padding-left:16px; border-left:1px solid var(--border); margin-left:14px; margin-top:2px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+<div class="hdr">
+  <h1>BVH</h1>
+  <span class="sub">Step-by-step construction</span>
+  <div class="mode-switch">
+    <button class="msw on" id="mswPlace">Place</button>
+    <button class="msw" id="mswTree">Tree</button>
+  </div>
+</div>
+
+<div class="cvs-wrap" id="wrap">
+  <canvas id="cv"></canvas>
+  <div class="tree-wrap" id="treeWrap"></div>
+  <div class="step-card" id="stepCard" style="display:none">
+    <div class="step-num" id="stepNum"></div>
+    <div class="step-title" id="stepTitle"></div>
+    <div class="step-body" id="stepBody"></div>
+  </div>
+</div>
+
+<!-- PLACE MODE controls -->
+<div class="place-bar" id="placeBar">
+  <span class="place-hint" id="placeHint">Tap canvas to place objects</span>
+  <button class="btn danger" id="btnClear">Clear</button>
+  <button class="btn secondary" id="btnRandom">⟳ Random</button>
+  <button class="btn go" id="btnBuild">Build BVH ▶</button>
+</div>
+
+<!-- STEP MODE controls -->
+<div class="ctrl-bar" id="ctrlBar" style="display:none">
+  <button class="btn" id="btnRestart">↩ Restart</button>
+  <div class="spacer"></div>
+  <div class="step-progress" id="stepProgress"></div>
+  <div class="spacer"></div>
+  <button class="btn primary" id="btnPrev">‹ Prev</button>
+  <button class="btn primary" id="btnNext">Next ›</button>
+</div>
+
+</div>
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const wrap = document.getElementById('wrap');
+
+let objects = [];
+let mode = 'place'; // 'place' | 'steps' | 'tree'
+let viewMode = 'place'; // 'place' | 'tree'
+
+// Step animation state
+let steps = [];      // array of step descriptors
+let stepIdx = 0;
+let bvhRoot = null;
+
+const DPR = window.devicePixelRatio || 1;
+
+// Colors per depth
+const DC = [
+  { s:'#00e5ff', f:'rgba(0,229,255,0.10)' },
+  { s:'#ff6b35', f:'rgba(255,107,53,0.10)' },
+  { s:'#7fff6b', f:'rgba(127,255,107,0.10)' },
+  { s:'#bf5fff', f:'rgba(191,95,255,0.10)' },
+  { s:'#ffd166', f:'rgba(255,209,102,0.10)' },
+];
+const GROUP_COLORS = ['#00e5ff','#ff6b9d','#7fff6b','#ffd166','#bf5fff','#ff6b35'];
+
+function cw() { return wrap.clientWidth; }
+function ch() { return wrap.clientHeight; }
+
+function resize() {
+  cv.width = cw() * DPR; cv.height = ch() * DPR;
+  cv.style.width = cw()+'px'; cv.style.height = ch()+'px';
+  ctx.scale(DPR, DPR);
+  render();
+}
+
+// ── AABB ────────────────────────────────────────────────
+function oAABB(o) { return {minX:o.x-o.r,minY:o.y-o.r,maxX:o.x+o.r,maxY:o.y+o.r}; }
+function merge(a,b) { return {minX:Math.min(a.minX,b.minX),minY:Math.min(a.minY,b.minY),maxX:Math.max(a.maxX,b.maxX),maxY:Math.max(a.maxY,b.maxY)}; }
+function groupAABB(objs) { let a=oAABB(objs[0]); for(let i=1;i<objs.length;i++) a=merge(a,oAABB(objs[i])); return a; }
+
+// ── BUILD BVH (for tree view) ────────────────────────────
+function buildBVH(objs, depth=0) {
+  if (!objs.length) return null;
+  const aabb = groupAABB(objs);
+  const node = {aabb,depth,children:[],objects:[],isLeaf:false};
+  if (objs.length<=1) { node.objects=objs; node.isLeaf=true; return node; }
+  const sx=aabb.maxX-aabb.minX, sy=aabb.maxY-aabb.minY;
+  const axis = sx>=sy?'x':'y';
+  node.splitAxis = axis;
+  const sorted=[...objs].sort((a,b)=>a[axis]-b[axis]);
+  const mid=Math.floor(sorted.length/2);
+  const L=buildBVH(sorted.slice(0,mid),depth+1);
+  const R=buildBVH(sorted.slice(mid),depth+1);
+  if(L) node.children.push(L);
+  if(R) node.children.push(R);
+  return node;
+}
+
+// ── GENERATE STEPS ──────────────────────────────────────
+// Each step: { type, data, title, body, num }
+function generateSteps(objs) {
+  const steps = [];
+  let stepCounter = 0;
+
+  function push(s) { s.idx = stepCounter++; steps.push(s); }
+
+  // Step 0: show all objects
+  push({
+    type: 'intro',
+    objs: [...objs],
+    title: 'All Objects',
+    body: `We have <em>${objs.length} objects</em>, each with a position and radius. Goal: build a hierarchy of bounding boxes so collision queries can skip irrelevant objects entirely.`
+  });
+
+  // Recursive step generator
+  function recurse(subset, depth, groupId) {
+    if (!subset.length) return null;
+
+    const aabb = groupAABB(subset);
+
+    // Step: compute AABB for this group
+    push({
+      type: 'aabb',
+      objs: [...objs],
+      subset: [...subset],
+      aabb,
+      depth,
+      groupId,
+      title: `Depth ${depth} — Compute AABB`,
+      body: depth===0
+        ? `Compute the <b>Axis-Aligned Bounding Box</b> that wraps <em>all ${subset.length} objects</em>. This becomes the root node.`
+        : `Compute AABB for this group of <em>${subset.length} objects</em> (depth ${depth}).`
+    });
+
+    if (subset.length <= 1) {
+      push({
+        type: 'leaf',
+        objs: [...objs],
+        subset: [...subset],
+        aabb,
+        depth,
+        groupId,
+        title: `Depth ${depth} — Leaf Node`,
+        body: `Only <em>1 object</em> in this group. This is a <b>leaf node</b> — no further splitting. Queries that reach here test the actual object.`
+      });
+      const node = {aabb, depth, isLeaf:true, objects:subset, children:[]};
+      return node;
+    }
+
+    // Step: measure spans
+    const spanX = aabb.maxX - aabb.minX;
+    const spanY = aabb.maxY - aabb.minY;
+    const axis = spanX >= spanY ? 'x' : 'y';
+
+    push({
+      type: 'axis',
+      objs: [...objs],
+      subset: [...subset],
+      aabb,
+      depth,
+      groupId,
+      axis,
+      spanX: Math.round(spanX),
+      spanY: Math.round(spanY),
+      title: `Depth ${depth} — Choose Split Axis`,
+      body: `X-span: <em>${Math.round(spanX)}px</em> &nbsp; Y-span: <em>${Math.round(spanY)}px</em><br>Longest axis = <b>${axis.toUpperCase()}</b>. We split along this axis so each child covers a smaller spatial region.`
+    });
+
+    // Step: sort along axis
+    const sorted = [...subset].sort((a,b) => a[axis]-b[axis]);
+    push({
+      type: 'sort',
+      objs: [...objs],
+      subset: [...subset],
+      sorted: [...sorted],
+      aabb,
+      depth,
+      groupId,
+      axis,
+      title: `Depth ${depth} — Sort Along ${axis.toUpperCase()}`,
+      body: `Sort all ${subset.length} objects by their centroid on the <b>${axis.toUpperCase()}-axis</b>. <s>Green numbers</s> show the sorted order. Spatially close objects end up adjacent — <em>not</em> insertion order.`
+    });
+
+    // Step: split at median
+    const mid = Math.floor(sorted.length / 2);
+    const left = sorted.slice(0, mid);
+    const right = sorted.slice(mid);
+
+    push({
+      type: 'split',
+      objs: [...objs],
+      subset: [...subset],
+      left: [...left],
+      right: [...right],
+      aabb,
+      depth,
+      groupId,
+      axis,
+      mid,
+      title: `Depth ${depth} — Split at Median`,
+      body: `Split at index <em>${mid}</em> (median). <b>Left group: ${left.length}</b> obj &nbsp; <u>Right group: ${right.length}</u> obj. Each group recurses independently — this is why nearby objects share branches.`
+    });
+
+    // Recurse
+    const Lchild = recurse(left, depth+1, groupId*2+1);
+    const Rchild = recurse(right, depth+1, groupId*2+2);
+
+    const node = {aabb, depth, isLeaf:false, splitAxis:axis, children:[Lchild,Rchild].filter(Boolean)};
+    return node;
+  }
+
+  const root = recurse(objs, 0, 0);
+
+  // Final step: complete tree
+  push({
+    type: 'done',
+    objs: [...objs],
+    root,
+    title: 'BVH Complete',
+    body: `Hierarchy built. A ray query now tests the <b>root AABB</b> first. If it misses, we skip everything. If it hits, we test children — pruning entire branches that don't intersect. O(log N) vs O(N) brute force.`
+  });
+
+  return { steps, root };
+}
+
+// ── DRAW HELPERS ─────────────────────────────────────────
+function drawGrid() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.02)';
+  ctx.lineWidth = 1;
+  for (let x=0;x<cw();x+=44) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,ch()); ctx.stroke(); }
+  for (let y=0;y<ch();y+=44) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(cw(),y); ctx.stroke(); }
+  ctx.restore();
+}
+
+function drawObj(o, col='rgba(255,255,255,0.75)', fill='rgba(255,255,255,0.08)', lineW=1.5) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(o.x, o.y, o.r, 0, Math.PI*2);
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = col;
+  ctx.lineWidth = lineW;
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function drawAABBRect(aabb, stroke, fill, lineW=1.5, dash=[]) {
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.fillStyle = fill;
+  ctx.lineWidth = lineW;
+  ctx.setLineDash(dash);
+  const w=aabb.maxX-aabb.minX, h=aabb.maxY-aabb.minY;
+  ctx.fillRect(aabb.minX,aabb.minY,w,h);
+  ctx.strokeRect(aabb.minX,aabb.minY,w,h);
+  ctx.restore();
+}
+
+function drawAxisLine(aabb, axis) {
+  ctx.save();
+  const mid = axis==='x'
+    ? (aabb.minX+aabb.maxX)/2
+    : (aabb.minY+aabb.maxY)/2;
+  ctx.strokeStyle = '#ffd166';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6,4]);
+  ctx.beginPath();
+  if (axis==='x') { ctx.moveTo(mid,aabb.minY-8); ctx.lineTo(mid,aabb.maxY+8); }
+  else             { ctx.moveTo(aabb.minX-8,mid); ctx.lineTo(aabb.maxX+8,mid); }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawLabel(text, x, y, col='#ffd166', size=9) {
+  ctx.save();
+  ctx.font = `600 ${size}px JetBrains Mono`;
+  ctx.fillStyle = col;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // bg
+  const w = ctx.measureText(text).width;
+  ctx.fillStyle = 'rgba(7,8,11,0.85)';
+  ctx.fillRect(x-w/2-3, y-size/2-3, w+6, size+6);
+  ctx.fillStyle = col;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function drawSpanArrow(aabb, axis, spanX, spanY) {
+  ctx.save();
+  // X span arrow
+  const cy = aabb.minY - 18;
+  const cx2 = aabb.minX + (aabb.maxX-aabb.minX)/2;
+  const rx = axis==='x' ? '#00e5ff' : '#3d4a66';
+  ctx.strokeStyle = rx; ctx.fillStyle = rx; ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(aabb.minX+2,cy); ctx.lineTo(aabb.maxX-2,cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(aabb.minX+2,cy-4); ctx.lineTo(aabb.minX+2,cy+4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(aabb.maxX-2,cy-4); ctx.lineTo(aabb.maxX-2,cy+4); ctx.stroke();
+  ctx.font='600 9px JetBrains Mono'; ctx.textAlign='center';
+  ctx.fillStyle='rgba(7,8,11,0.85)';
+  ctx.fillRect(cx2-18,cy-14,36,14);
+  ctx.fillStyle=rx;
+  ctx.fillText(`X:${spanX}`, cx2, cy-7);
+
+  // Y span arrow
+  const cx = aabb.maxX + 18;
+  const cy2 = aabb.minY + (aabb.maxY-aabb.minY)/2;
+  const ry = axis==='y' ? '#00e5ff' : '#3d4a66';
+  ctx.strokeStyle = ry; ctx.fillStyle = ry; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx,aabb.minY+2); ctx.lineTo(cx,aabb.maxY-2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx-4,aabb.minY+2); ctx.lineTo(cx+4,aabb.minY+2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx-4,aabb.maxY-2); ctx.lineTo(cx+4,aabb.maxY-2); ctx.stroke();
+  ctx.textAlign='center';
+  ctx.fillStyle='rgba(7,8,11,0.85)';
+  ctx.fillRect(cx-18,cy2-7,36,14);
+  ctx.fillStyle=ry;
+  ctx.fillText(`Y:${spanY}`, cx, cy2);
+  ctx.restore();
+}
+
+function drawCompleteBVH(node, maxD=99) {
+  if (!node || node.depth>maxD) return;
+  const c = DC[Math.min(node.depth, DC.length-1)];
+  drawAABBRect(node.aabb, c.s, c.f, 1);
+  for (const ch of node.children) drawCompleteBVH(ch, maxD);
+}
+
+// ── RENDER STEP ──────────────────────────────────────────
+function renderStep(step) {
+  ctx.clearRect(0,0,cw(),ch());
+  drawGrid();
+
+  if (!step) return;
+
+  const allObjs = step.objs || [];
+  const subset = step.subset || [];
+  const subSet = new Set(subset);
+  const leftSet = new Set(step.left||[]);
+  const rightSet = new Set(step.right||[]);
+  const sortedArr = step.sorted || [];
+
+  // Draw dim versions of all objects first
+  for (const o of allObjs) {
+    const inSub = subSet.has(o);
+    if (!inSub) drawObj(o, 'rgba(255,255,255,0.18)', 'rgba(255,255,255,0.03)', 1);
+  }
+
+  switch(step.type) {
+    case 'intro': {
+      for (const o of allObjs) drawObj(o);
+      break;
+    }
+
+    case 'aabb': {
+      // Draw existing AABBs at lower depths (already built)
+      // Just show this group's AABB forming
+      drawAABBRect(step.aabb,
+        DC[Math.min(step.depth,DC.length-1)].s,
+        DC[Math.min(step.depth,DC.length-1)].f,
+        2, []);
+      for (const o of subset) drawObj(o);
+      // corner labels
+      const a = step.aabb;
+      drawLabel(`(${Math.round(a.minX)},${Math.round(a.minY)})`, a.minX, a.minY-10, '#3d4a66', 8);
+      drawLabel(`(${Math.round(a.maxX)},${Math.round(a.maxY)})`, a.maxX, a.maxY+10, '#3d4a66', 8);
+      break;
+    }
+
+    case 'axis': {
+      drawAABBRect(step.aabb, DC[Math.min(step.depth,DC.length-1)].s, DC[Math.min(step.depth,DC.length-1)].f, 1.5);
+      drawSpanArrow(step.aabb, step.axis, step.spanX, step.spanY);
+      drawAxisLine(step.aabb, step.axis);
+      for (const o of subset) drawObj(o);
+      break;
+    }
+
+    case 'sort': {
+      drawAABBRect(step.aabb, DC[Math.min(step.depth,DC.length-1)].s, DC[Math.min(step.depth,DC.length-1)].f, 1.5);
+      drawAxisLine(step.aabb, step.axis);
+      // Draw sorted order numbers on objects
+      for (let i=0;i<sortedArr.length;i++) {
+        const o = sortedArr[i];
+        const t = (i/(sortedArr.length-1||1));
+        // gradient color from left group to right group
+        drawObj(o, '#7fff6b', 'rgba(127,255,107,0.12)', 2);
+        drawLabel(`${i+1}`, o.x, o.y, '#7fff6b', 10);
+        // show sort axis position
+        if (step.axis==='x') {
+          ctx.save();
+          ctx.strokeStyle='rgba(127,255,107,0.25)';
+          ctx.lineWidth=1;
+          ctx.setLineDash([3,3]);
+          ctx.beginPath(); ctx.moveTo(o.x, o.y+o.r); ctx.lineTo(o.x, step.aabb.maxY+12); ctx.stroke();
+          ctx.restore();
+        } else {
+          ctx.save();
+          ctx.strokeStyle='rgba(127,255,107,0.25)';
+          ctx.lineWidth=1;
+          ctx.setLineDash([3,3]);
+          ctx.beginPath(); ctx.moveTo(o.x+o.r, o.y); ctx.lineTo(step.aabb.maxX+12, o.y); ctx.stroke();
+          ctx.restore();
+        }
+      }
+      break;
+    }
+
+    case 'split': {
+      // Draw left group AABB
+      if (step.left.length) {
+        const lAABB = groupAABB(step.left);
+        drawAABBRect(lAABB, '#00e5ff', 'rgba(0,229,255,0.08)', 2);
+      }
+      // Draw right group AABB
+      if (step.right.length) {
+        const rAABB = groupAABB(step.right);
+        drawAABBRect(rAABB, '#ff6b9d', 'rgba(255,107,157,0.08)', 2);
+      }
+      // Draw split line
+      drawAxisLine(step.aabb, step.axis);
+      // Draw objects colored by group
+      for (const o of allObjs) {
+        if (leftSet.has(o)) {
+          drawObj(o, '#00e5ff', 'rgba(0,229,255,0.15)', 2);
+          drawLabel('L', o.x, o.y, '#00e5ff', 9);
+        } else if (rightSet.has(o)) {
+          drawObj(o, '#ff6b9d', 'rgba(255,107,157,0.15)', 2);
+          drawLabel('R', o.x, o.y, '#ff6b9d', 9);
+        } else {
+          drawObj(o, 'rgba(255,255,255,0.18)', 'rgba(255,255,255,0.03)', 1);
+        }
+      }
+      // median label
+      {
+        const a = step.aabb;
+        const med = step.axis==='x'
+          ? (a.minX+a.maxX)/2
+          : (a.minY+a.maxY)/2;
+        ctx.save();
+        ctx.font='700 9px JetBrains Mono';
+        ctx.fillStyle='#ffd166';
+        ctx.textAlign='center';
+        if (step.axis==='x') ctx.fillText(`median`, med, a.minY-6);
+        else ctx.fillText(`median`, a.minX-30, (a.minY+a.maxY)/2);
+        ctx.restore();
+      }
+      break;
+    }
+
+    case 'leaf': {
+      drawAABBRect(step.aabb, '#ffd166', 'rgba(255,209,102,0.1)', 2, [4,4]);
+      for (const o of subset) drawObj(o, '#ffd166', 'rgba(255,209,102,0.2)', 2);
+      drawLabel('LEAF', step.aabb.minX+(step.aabb.maxX-step.aabb.minX)/2, step.aabb.minY-8, '#ffd166', 9);
+      break;
+    }
+
+    case 'done': {
+      if (step.root) drawCompleteBVH(step.root);
+      for (const o of allObjs) drawObj(o);
+      // glow effect on all
+      ctx.save();
+      ctx.globalAlpha=0.3;
+      for (const o of allObjs) {
+        const g=ctx.createRadialGradient(o.x,o.y,0,o.x,o.y,o.r*2);
+        g.addColorStop(0,'rgba(0,229,255,0.3)');
+        g.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.fillStyle=g;
+        ctx.beginPath(); ctx.arc(o.x,o.y,o.r*2,0,Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+      break;
+    }
+  }
+}
+
+function renderPlace() {
+  ctx.clearRect(0,0,cw(),ch());
+  drawGrid();
+  for (const o of objects) drawObj(o);
+  // place hint
+  if (objects.length===0) {
+    ctx.save();
+    ctx.font='400 12px JetBrains Mono';
+    ctx.fillStyle='rgba(61,74,102,0.8)';
+    ctx.textAlign='center';
+    ctx.fillText('Tap to place objects', cw()/2, ch()/2);
+    ctx.restore();
+  }
+}
+
+function render() {
+  if (mode==='place') { renderPlace(); return; }
+  if (mode==='steps') { renderStep(steps[stepIdx]); return; }
+}
+
+// ── STEP CARD ────────────────────────────────────────────
+function updateStepCard() {
+  const card = document.getElementById('stepCard');
+  const step = steps[stepIdx];
+  if (!step || mode!=='steps') { card.style.display='none'; return; }
+  card.style.display='block';
+  document.getElementById('stepNum').textContent = `Step ${stepIdx+1} of ${steps.length}`;
+  document.getElementById('stepTitle').textContent = step.title;
+  document.getElementById('stepBody').innerHTML = step.body;
+
+  // progress dots
+  const prog = document.getElementById('stepProgress');
+  prog.innerHTML = '';
+  const total = steps.length;
+  const show = Math.min(total, 12);
+  const startI = Math.max(0, Math.min(stepIdx - Math.floor(show/2), total-show));
+  for (let i=startI;i<startI+show;i++) {
+    const d = document.createElement('div');
+    d.className = 'sp-dot' + (i<stepIdx?' done':i===stepIdx?' active':'');
+    prog.appendChild(d);
+  }
+}
+
+// ── TREE VIEW ────────────────────────────────────────────
+function buildTreeHTML(node, depth=0) {
+  if (!node) return '';
+  const c = DC[Math.min(depth, DC.length-1)];
+  const indent = depth * 14;
+  const label = node.isLeaf
+    ? `Leaf (${node.objects?.length||1} obj)`
+    : `Node — split ${node.splitAxis?.toUpperCase()||'?'}`;
+  const w=Math.round(node.aabb.maxX-node.aabb.minX);
+  const h=Math.round(node.aabb.maxY-node.aabb.minY);
+  let html = `<div class="tnode">
+    <div class="tnode-row" style="padding-left:${10+indent}px">
+      <div class="tnode-dot" style="background:${c.s}22;border:1.5px solid ${c.s}"></div>
+      <div>
+        <div class="tnode-label" style="color:${c.s}">L${depth} ${label}</div>
+        <div class="tnode-detail">AABB ${w}×${h}px</div>
+      </div>
+      ${node.splitAxis?`<div class="tnode-axis" style="color:${c.s};border:1px solid ${c.s}33;background:${c.s}11">${node.splitAxis.toUpperCase()}-axis</div>`:''}
+    </div>`;
+  if (!node.isLeaf && node.children.length) {
+    html += `<div class="tnode-children">`;
+    for (const ch of node.children) html += buildTreeHTML(ch, depth+1);
+    html += `</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// ── INPUT ─────────────────────────────────────────────────
+function getPos(e) {
+  const r = cv.getBoundingClientRect();
+  const src = e.touches ? e.touches[0] : e;
+  return { x: src.clientX-r.left, y: src.clientY-r.top };
+}
+
+cv.addEventListener('click', e => {
+  if (mode!=='place') return;
+  const {x,y} = getPos(e);
+  objects.push({ x, y, r: 12+Math.random()*16 });
+  updatePlaceHint();
+  render();
+});
+
+cv.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (mode!=='place') return;
+  const {x,y} = getPos(e);
+  objects.push({ x, y, r: 12+Math.random()*16 });
+  updatePlaceHint();
+  render();
+}, {passive:false});
+
+function updatePlaceHint() {
+  const h = document.getElementById('placeHint');
+  if (objects.length===0) h.textContent='Tap canvas to place objects';
+  else if (objects.length<3) h.textContent=`${objects.length} object${objects.length>1?'s':''} — add more or build`;
+  else h.textContent=`${objects.length} objects ready`;
+  document.getElementById('btnBuild').disabled = objects.length<2;
+}
+
+// ── BUTTONS ───────────────────────────────────────────────
+document.getElementById('btnClear').addEventListener('click', () => {
+  objects=[];
+  mode='place';
+  updatePlaceHint();
+  render();
+});
+
+document.getElementById('btnRandom').addEventListener('click', () => {
+  objects=[];
+  const n = 6+Math.floor(Math.random()*8);
+  const pad=40;
+  for(let i=0;i<n;i++) objects.push({
+    x: pad+Math.random()*(cw()-pad*2),
+    y: pad+Math.random()*(ch()-pad*2-120),
+    r: 12+Math.random()*20
+  });
+  updatePlaceHint();
+  render();
+});
+
+document.getElementById('btnBuild').addEventListener('click', () => {
+  if (objects.length<2) return;
+  const result = generateSteps(objects);
+  steps = result.steps;
+  bvhRoot = result.root;
+  stepIdx = 0;
+  mode = 'steps';
+  document.getElementById('placeBar').style.display='none';
+  document.getElementById('ctrlBar').style.display='flex';
+  document.getElementById('stepCard').style.display='block';
+  updateStepCard();
+  render();
+});
+
+document.getElementById('btnRestart').addEventListener('click', () => {
+  mode='place';
+  document.getElementById('placeBar').style.display='flex';
+  document.getElementById('ctrlBar').style.display='none';
+  document.getElementById('stepCard').style.display='none';
+  // also reset tree view
+  document.getElementById('treeWrap').classList.remove('show');
+  cv.style.display='block';
+  document.getElementById('mswPlace').classList.add('on');
+  document.getElementById('mswTree').classList.remove('on');
+  viewMode='place';
+  updatePlaceHint();
+  render();
+});
+
+document.getElementById('btnNext').addEventListener('click', () => {
+  if (stepIdx < steps.length-1) { stepIdx++; updateStepCard(); render(); }
+});
+document.getElementById('btnPrev').addEventListener('click', () => {
+  if (stepIdx > 0) { stepIdx--; updateStepCard(); render(); }
+});
+
+// Swipe
+let touchStartX=0, touchStartY=0;
+cv.addEventListener('touchstart', e=>{
+  if(mode!=='steps') return;
+  touchStartX=e.touches[0].clientX;
+  touchStartY=e.touches[0].clientY;
+},{passive:true});
+cv.addEventListener('touchend', e=>{
+  if(mode!=='steps') return;
+  const dx=e.changedTouches[0].clientX-touchStartX;
+  const dy=Math.abs(e.changedTouches[0].clientY-touchStartY);
+  if(Math.abs(dx)>40 && dy<60) {
+    if(dx<0 && stepIdx<steps.length-1){stepIdx++;updateStepCard();render();}
+    if(dx>0 && stepIdx>0){stepIdx--;updateStepCard();render();}
+  }
+},{passive:true});
+
+// View switch
+document.getElementById('mswPlace').addEventListener('click', () => {
+  viewMode='place';
+  document.getElementById('mswPlace').classList.add('on');
+  document.getElementById('mswTree').classList.remove('on');
+  document.getElementById('treeWrap').classList.remove('show');
+  cv.style.display='block';
+  render();
+});
+
+document.getElementById('mswTree').addEventListener('click', () => {
+  if(!bvhRoot) return;
+  viewMode='tree';
+  document.getElementById('mswPlace').classList.remove('on');
+  document.getElementById('mswTree').classList.add('on');
+  document.getElementById('treeWrap').classList.add('show');
+  cv.style.display='none';
+  document.getElementById('treeWrap').innerHTML = buildTreeHTML(bvhRoot);
+});
+
+// Key support for desktop
+document.addEventListener('keydown', e=>{
+  if(e.key==='ArrowRight'&&stepIdx<steps.length-1){stepIdx++;updateStepCard();render();}
+  if(e.key==='ArrowLeft'&&stepIdx>0){stepIdx--;updateStepCard();render();}
+});
+
+// Init
+window.addEventListener('resize', ()=>{ resize(); });
+resize();
+updatePlaceHint();
+
+// Seed with a nice default layout
+setTimeout(()=>{
+  const cx=cw()/2, cy=(ch()-180)/2;
+  objects=[
+    {x:cx-110,y:cy-60,r:18},{x:cx-50,y:cy+70,r:14},
+    {x:cx+80,y:cy-80,r:20},{x:cx+120,y:cy+50,r:16},
+    {x:cx-20,y:cy-20,r:15},{x:cx+30,y:cy+90,r:13},
+    {x:cx-100,y:cy+30,r:17},{x:cx+60,y:cy-10,r:19},
+  ];
+  updatePlaceHint();
+  render();
+},80);
+</script>
+</body>
+</html>
